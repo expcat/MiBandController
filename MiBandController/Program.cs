@@ -6,12 +6,15 @@ using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
 using Windows.Storage.Streams;
+using Windows.Media.Control;
 
 namespace MiBandController
 {
     class Program
     {
         private static string MusicName = "All Around The World";
+        private static IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions;
+        private static GlobalSystemMediaTransportControlsSessionManager sessionManager;
 
         public static BluetoothLEAdvertisementWatcher bluetoothLEAdvertisementWatcher = new BluetoothLEAdvertisementWatcher()
         {
@@ -33,6 +36,17 @@ namespace MiBandController
 
         static async Task Main(string[] args)
         {
+            sessionManager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            sessionManager.SessionsChanged += SessionManager_SessionsChanged;
+            sessions = sessionManager.GetSessions();
+            foreach(var session in sessions)
+            {
+                session.MediaPropertiesChanged += Session_MediaPropertiesChanged;
+                MusicName = (await session.TryGetMediaPropertiesAsync()).Title;
+            }
+            //Initialize the music controller  (SMTC)
+            //NOTICED   IT'S ONLY SUPPORT WINDOWS10 UWP APP.    OR OTHER APP PATCHED.
+
             await UUID.ConnectDevice();
             Cout("ConnectStatus", UUID.BluetoothLEDevice.ConnectionStatus);
             Cout("DeviceName", UUID.BluetoothLEDevice.Name);
@@ -60,7 +74,7 @@ namespace MiBandController
             Cout("MiBandDate", (await UUID.MiBand2Service.Date.GetDate()).ToString());
             Cout("BatteryInfo", (await UUID.MiBand2Service.BatteryInfo.GetBatteryInfo()).ToString());
 
-            while (true)
+            while (false)
             {
                 MusicName = Console.ReadLine();
                 //Cout("WirteRep", (await UUID.MiBand2Service.Music.SetTest()).Status);
@@ -79,6 +93,19 @@ namespace MiBandController
             Console.ReadKey();
         }
 
+        private static async void Session_MediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
+        {
+            MusicName = (await sender.TryGetMediaPropertiesAsync()).Title;
+            await UUID.MiBand2Service.Music.SetMusicName(MusicName);
+        }
+
+        private static void SessionManager_SessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
+        {
+            sessions = sender.GetSessions();
+            Cout("SMTCSessionChanged", sessions.Count);
+            //I don't know if it's correctly here.
+        }
+
         private static async void MusicNotificationAsync(GattCharacteristic sender, GattValueChangedEventArgs args)
         {
             DataReader dataReader = DataReader.FromBuffer(args.CharacteristicValue);
@@ -89,6 +116,20 @@ namespace MiBandController
             {
                 Cout("SetMusicName", MusicName);
                 await UUID.MiBand2Service.Music.SetMusicName(MusicName);
+            }
+            //it may cause the speed of code a bit low,but i'm more lazy.
+            foreach(var item in sessions)
+            {
+                switch (ret)
+                {
+                    case 0x00: await item.TryPlayAsync(); break;
+                    case 0x01: await item.TryPauseAsync(); break;
+                    case 0x02: await item.TryPlayAsync(); break;
+                    case 0x03: await item.TrySkipNextAsync(); break;
+                    case 0x04: await item.TrySkipPreviousAsync(); break;
+                    case 0x05: await item.TryChangeChannelUpAsync(); break;
+                    case 0x06: await item.TryChangeChannelDownAsync(); break;
+                }
             }
         }
 
